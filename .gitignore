@@ -1,0 +1,41 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*.$py.class
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Caches and logs
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Project artifacts
+artifacts/
+models/
+history/
+*.pt
+*.joblib
+
+# Kaggle data (user-provided)
+data/
+titanic.zip
