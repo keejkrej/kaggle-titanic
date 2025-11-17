@@ -8,7 +8,7 @@ This repository provides a reproducible workflow for training a deep neural netw
 .
 ├── artifacts/              # Saved preprocessing pipeline + training history
 ├── data/                   # Place Kaggle train.csv and test.csv here
-├── models/                 # Trained TensorFlow models
+├── models/                 # Trained PyTorch models
 ├── src/
 │   ├── data_utils.py       # Feature engineering + preprocessing helpers
 │   └── model.py            # Model architecture + training utilities
@@ -57,13 +57,15 @@ Key arguments:
 
 - `--data-dir`: where the CSV files live (`data` by default)
 - `--epochs`: maximum training epochs (default 200 with early stopping)
+- `--batch-size`: batch size for PyTorch DataLoaders (default 32)
+- `--device`: `cpu`, `cuda`, or `auto` (default `auto`)
 - `--test-size`: validation split size (default 0.2)
 - `--generate-submission`: immediately create a submission after training
 
 Artifacts saved:
 
-- `models/titanic_dnn.keras`: final TensorFlow model
-- `models/best_model.keras`: checkpoint with the best validation loss
+- `models/titanic_dnn.pt`: final PyTorch weights (state dict)
+- `models/best_model.pt`: checkpoint with the best validation loss
 - `artifacts/preprocessor.joblib`: fitted `ColumnTransformer`
 - `artifacts/training_history.json`: loss/accuracy per epoch
 - `submissions/submission_*.csv`: Kaggle submission (only when `--generate-submission` is provided)
@@ -75,12 +77,14 @@ After training, regenerate predictions at any time without retraining:
 ```bash
 python predict.py \
   --data-dir data \
-  --model-path models/titanic_dnn.keras \
+  --model-path models/titanic_dnn.pt \
   --preprocessor-path artifacts/preprocessor.joblib \
-  --submission-path submissions/submission.csv
+  --submission-path submissions/submission.csv \
+  --device auto
 ```
 
 ## Notes
 
 - The deep neural network uses engineered features (family size, cabin deck, ticket group size, passenger titles) and a preprocessing pipeline that is persisted for inference.
+- Training and inference are implemented with PyTorch; no TensorFlow dependency is required.
 - Because the Kaggle dataset requires authentication, this repository does **not** download the data automatically. Ensure the CSV files are in `data/` before running the scripts.
