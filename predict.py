@@ -39,10 +39,6 @@ def main() -> None:
     args = parse_args()
     device = _get_device(args.device)
 
-    if not args.model_path.exists():
-        raise FileNotFoundError(
-            f"Model not found at {args.model_path}. Train the model with train.py first."
-        )
     if not args.preprocessor_path.exists():
         raise FileNotFoundError(
             f"Preprocessor not found at {args.preprocessor_path}. Train the model with train.py first."
@@ -50,17 +46,73 @@ def main() -> None:
 
     preprocessor = joblib.load(args.preprocessor_path)
     passenger_ids, test_features = transform_test_data(args.data_dir, preprocessor)
-    model = TitanicNet(input_dim=test_features.shape[1])
-    state_dict = torch.load(args.model_path, map_location=device)
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
+    
+    # Check if ensemble info exists
+    ensemble_info_path = args.preprocessor_path.parent / "ensemble_info.json"
+    if ensemble_info_path.exists():
+        # Use ensemble
+        from src.ensemble import EnsembleModel
+        
+        # Handle both old and new format
+        import json
+        with ensemble_info_path.open() as f:
+            ensemble_info = json.load(f)
+        
+        if "model_info" in ensemble_info:
+            # Prefer final models trained on full dataset if available
+            if "final_model_info" in ensemble_info:
+                # Use final ensemble
+                final_ensemble = EnsembleModel.load_ensemble_from_info(
+                    ensemble_info["final_model_info"], test_features.shape[1], device
+                )
+                weights = ensemble_info.get("final_ensemble_weights")
+                if weights:
+                    import numpy as np
+                    weights = np.array(weights)
+                    predicted_labels = final_ensemble.predict(test_features, weights=weights)
+                    print(f"Using weighted final ensemble of {len(final_ensemble.models)} models")
+                else:
+                    predicted_labels = final_ensemble.predict(test_features)
+                    print(f"Using final ensemble of {len(final_ensemble.models)} models")
+            else:
+                # Use initial ensemble
+                ensemble = EnsembleModel.load_ensemble_from_info(
+                    ensemble_info["model_info"], test_features.shape[1], device
+                )
+                weights = ensemble_info.get("ensemble_weights")
+                if weights:
+                    import numpy as np
+                    weights = np.array(weights)
+                    predicted_labels = ensemble.predict(test_features, weights=weights)
+                    print(f"Using weighted ensemble of {len(ensemble.models)} models")
+                else:
+                    predicted_labels = ensemble.predict(test_features)
+                    print(f"Using ensemble of {len(ensemble.models)} models")
+        else:
+            # Old format (backward compatibility)
+            model_paths = [Path(p) for p in ensemble_info["model_paths"]]
+            ensemble = EnsembleModel.load_ensemble(
+                model_paths, test_features.shape[1], device
+            )
+            predicted_labels = ensemble.predict(test_features)
+            print(f"Using ensemble of {len(ensemble.models)} models")
+    else:
+        # Use single model
+        if not args.model_path.exists():
+            raise FileNotFoundError(
+                f"Model not found at {args.model_path}. Train the model with train.py first."
+            )
+        model = TitanicNet(input_dim=test_features.shape[1])
+        state_dict = torch.load(args.model_path, map_location=device)
+        model.load_state_dict(state_dict)
+        model.to(device)
+        model.eval()
 
-    with torch.no_grad():
-        feature_tensor = torch.from_numpy(test_features).float().to(device)
-        logits = model(feature_tensor)
-        predictions = torch.sigmoid(logits).cpu().numpy().ravel()
-    predicted_labels = (predictions >= 0.5).astype(int)
+        with torch.no_grad():
+            feature_tensor = torch.from_numpy(test_features).float().to(device)
+            logits = model(feature_tensor)
+            predictions = torch.sigmoid(logits).cpu().numpy().ravel()
+        predicted_labels = (predictions >= 0.5).astype(int)
 
     args.submission_path.parent.mkdir(parents=True, exist_ok=True)
     submission_df = pd.DataFrame({"PassengerId": passenger_ids, "Survived": predicted_labels})

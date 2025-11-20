@@ -13,13 +13,24 @@ class TitanicNet(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        hidden_units: Iterable[int] = (128, 64, 32),
-        dropout_rate: float = 0.3,
+        hidden_units: Iterable[int] = (256, 128, 64, 32),
+        dropout_rate: float = 0.4,
     ) -> None:
         super().__init__()
         layers: List[nn.Module] = []
         last_dim = input_dim
-        for units in hidden_units:
+        
+        # First layer with more capacity
+        layers.extend([
+            nn.Linear(last_dim, hidden_units[0]),
+            nn.BatchNorm1d(hidden_units[0]),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate * 0.5),  # Less dropout in first layer
+        ])
+        last_dim = hidden_units[0]
+        
+        # Middle layers
+        for units in hidden_units[1:]:
             layers.extend(
                 [
                     nn.Linear(last_dim, units),
@@ -29,10 +40,19 @@ class TitanicNet(nn.Module):
                 ]
             )
             last_dim = units
+        
+        # Output layer
         layers.append(nn.Linear(last_dim, 1))
         self.network = nn.Sequential(*layers)
 
     def forward(self, x: Tensor) -> Tensor:  # type: ignore[override]
+        # Handle batch size 1 for BatchNorm1d (requires batch_size > 1 during training)
+        if self.training and x.size(0) == 1:
+            # Temporarily set to eval mode for single-sample batches
+            self.eval()
+            output = self.network(x)
+            self.train()
+            return output
         return self.network(x)
 
 
@@ -65,15 +85,19 @@ def train_model(
     model_dir: Path,
     device: torch.device,
     epochs: int = 200,
-    lr: float = 1e-3,
+    lr: float = 5e-4,
     patience: int = 20,
+    min_delta: float = 0.0,
 ) -> TrainingHistory:
     model_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = model_dir / "best_model.pt"
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=0.5, patience=7, min_lr=1e-6
+    )
     criterion = nn.BCEWithLogitsLoss()
     history = TrainingHistory([], [], [], [])
-    best_val_loss = float("inf")
+    best_val_acc = 0.0
     patience_counter = 0
 
     for epoch in range(1, epochs + 1):
@@ -112,24 +136,30 @@ def train_model(
         history.val_loss.append(val_loss)
         history.val_accuracy.append(val_acc)
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Track best validation accuracy instead of loss
+        # Only reset patience if improvement is significant (min_delta)
+        if val_acc > best_val_acc + min_delta:
+            best_val_acc = val_acc
             patience_counter = 0
             torch.save(model.state_dict(), checkpoint_path)
         else:
             patience_counter += 1
 
+        scheduler.step(val_acc)  # Step scheduler based on validation accuracy
+
         print(
             f"Epoch {epoch:03d} - "
             f"train_loss: {train_loss:.4f} train_acc: {train_acc:.4f} "
-            f"val_loss: {val_loss:.4f} val_acc: {val_acc:.4f}"
+            f"val_loss: {val_loss:.4f} val_acc: {val_acc:.4f} "
+            f"(best: {best_val_acc:.4f})"
         )
 
         if patience_counter >= patience:
-            print("Early stopping triggered.")
+            print(f"Early stopping triggered. Best validation accuracy: {best_val_acc:.4f}")
             break
 
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    model.eval()  # Set to eval mode before returning (important for BatchNorm/Dropout)
     return history
 
 
